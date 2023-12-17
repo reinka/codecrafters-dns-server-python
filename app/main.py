@@ -25,7 +25,7 @@ class DNSHeader:
             self.id,
             flags,
             self.qdcount,
-            self.nscount,
+            self.ancount,
             self.nscount,
             self.arcount,
         )
