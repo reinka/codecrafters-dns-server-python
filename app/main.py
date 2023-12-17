@@ -1,25 +1,6 @@
 import socket
 import struct
 
-class DNSQuestion:
-    def __init__(self, domain: str, qtype : str = 1, qclass : str = 1) -> None:
-        self.qname = self.parse(domain)
-        self.qtype = qtype
-        self.qclass = qclass
-
-    def parse(self, domain) -> bytes:
-        parts = domain.split('.')
-        result = b''
-        for part in parts:
-            length = len(part)
-            result += length.to_bytes(1, byteorder='big') + part.encode()
-        result += b'\x00'
-        return result
-
-
-    def to_bytes(self) -> bytes:
-        return self.qname + struct.pack('!HH', self.qtype, self.qclass)
-
 class DNSHeader:
     def __init__(self):
         self.id = 1234
@@ -50,6 +31,51 @@ class DNSHeader:
         )
 
 
+def encode_str_to_bytes(data) -> bytes:
+    parts = data.split('.')
+    result = b''
+    for part in parts:
+        length = len(part)
+        result += length.to_bytes(1, byteorder='big') + part.encode()
+    result += b'\x00'
+    return result
+
+class DNSQuestion:
+    def __init__(self, domain: str, qtype : str = 1, qclass : str = 1) -> None:
+        self.qname = self.encode(domain)
+        self.qtype = qtype
+        self.qclass = qclass
+
+    def encode(self, domain : str) -> bytes:
+        return encode_str_to_bytes(domain)
+
+    def to_bytes(self) -> bytes:
+        return self.qname + struct.pack('!HH', self.qtype, self.qclass)
+
+
+class DNSAnswer:
+    def __init__(self, name, ip) -> None:
+        self.name = self.encode(name)
+        self.type = (1).to_bytes(2, byteorder='big')
+        self.aclass = (1).to_bytes(2, byteorder='big')
+        self.ttl = (60).to_bytes(4, 'big')
+        self.length = (4).to_bytes(2, 'big')
+        self.data = self.ip_to_bytes(ip)
+
+    def encode(self, data : str) -> bytes:
+        return encode_str_to_bytes(data)
+
+    def ip_to_bytes(self, ip : str) -> bytes:
+        res = b''
+        for part in ip.split('.'):
+            res += int(part).to_bytes(1, 'big')
+
+        return res
+    
+    def to_bytes(self):
+        return self.name + self.type + self.aclass + self.ttl + self.length + self.data
+
+
 def main():
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!")
@@ -61,10 +87,10 @@ def main():
                 data, addr = s.recvfrom(512)
                 print(f'Received data from {addr}: {data}')
                 header = DNSHeader()
-                header_bytes = header.to_bytes()
-                q = DNSQuestion('codecrafters.io')
-                msg_bytes = q.to_bytes()
-                s.sendto(header_bytes + msg_bytes, addr)
+                domain = 'codecrafters.io'
+                q = DNSQuestion(domain)
+                a = DNSAnswer(domain, '8.8.8.8')
+                s.sendto(header.to_bytes() + q.to_bytes() + a.to_bytes(), addr)
             except Exception as e:
                 print(f'Error receiving data: {e}')
                 break
