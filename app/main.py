@@ -1,6 +1,25 @@
 import socket
 import struct
 
+class DNSQuestion:
+    def __init__(self, domain: str, qtype : str = 1, qclass : str = 1) -> None:
+        self.qname = self.parse(domain)
+        self.qtype = qtype
+        self.qclass = qclass
+
+    def parse(self, domain) -> bytes:
+        parts = domain.split('.')
+        result = b''
+        for part in parts:
+            length = len(part)
+            result += length.to_bytes(1, byteorder='big') + part.encode()
+        result += b'\x00'
+        return result
+
+
+    def to_bytes(self) -> bytes:
+        return self.qname + struct.pack('!HH', self.qtype, self.qclass)
+
 class DNSHeader:
     def __init__(self):
         self.id = 1234
@@ -20,7 +39,7 @@ class DNSHeader:
             | (self.rcode)
         )
         return struct.pack(
-            ">HHHHHH",
+            "!HHHHHH",
             self.id,
             flags,
             self.qdcount,
@@ -38,11 +57,13 @@ def main():
         s.bind(('127.0.0.1', 2053))
         while True:
             try:
-                data, addr = s.recvfrom(1024)
+                data, addr = s.recvfrom(512)
                 print(f'Received data from {addr}: {data}')
                 header = DNSHeader()
                 header_bytes = header.to_bytes()
-                s.sendto(header_bytes, addr)
+                q = DNSQuestion('codecrafters.io')
+                msg_bytes = q.to_bytes()
+                s.sendto(header_bytes + msg_bytes, addr)
             except Exception as e:
                 print(f'Error receiving data: {e}')
                 break
