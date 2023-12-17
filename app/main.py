@@ -25,7 +25,8 @@ class DNSHeader:
         self.id = 1234
         self.qr = 1
         self.opcode = self.aa = self.tc = self.rd = self.ra = self.z = self.rcode = 0
-        self.qdcount = self.ancount = self.nscount = self.arcount = 0
+        self.ancount = self.nscount = self.arcount = 0
+        self.qdcount = 1
 
     def to_bytes(self) -> bytes:
         flags = (
