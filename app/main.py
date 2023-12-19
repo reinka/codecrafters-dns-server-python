@@ -196,7 +196,7 @@ def main():
                 hid=query_header.id,  # Match the query's ID
                 qr=1,  # This is a response
                 opcode=query_header.opcode,
-                aa=1,  # Assuming authoritative answer
+                aa=0,
                 tc=0,  # Not truncated
                 rd=query_header.rd,
                 ra=0,  # Recursion not available
