@@ -152,7 +152,7 @@ def main():
                 print(f"Received data from {addr}: {data}")
                 header = DNSHeader.from_bytes(data)
                 # ovwerrite received flags for our reply
-                header.qr, header.arcount, header.nscount = 1, 0, 0
+                header.qr, header.ancount, header.arcount, header.nscount = 1, 1, 0, 0
                 print(vars(header))
                 domain = "codecrafters.io"
                 q = DNSQuestion(domain)
