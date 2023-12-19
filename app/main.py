@@ -98,16 +98,39 @@ def encode_str_to_bytes(data: str) -> bytes:
 
 
 class DNSQuestion:
-    def __init__(self, domain: str, qtype: str = 1, qclass: str = 1) -> None:
+    def __init__(self, domain: str, qtype: int = 1, qclass: int = 1) -> None:
         self.qname = self.encode(domain)
         self.qtype = qtype
         self.qclass = qclass
+        self.domain = domain
 
     def encode(self, domain: str) -> bytes:
         return encode_str_to_bytes(domain)
 
     def to_bytes(self) -> bytes:
         return self.qname + struct.pack("!HH", self.qtype, self.qclass)
+
+    @staticmethod
+    def from_bytes(message : bytes) -> 'DNSQuestion':
+        name_end, domain = DNSQuestion.parse_domain(message)
+        start, end = name_end + 1, name_end + 5
+        qtype, qclass = struct.unpack('!HH', message[start:end])
+        return DNSQuestion(domain, qtype, qclass)
+    
+    @staticmethod
+    def parse_domain(message : bytes) -> tuple:
+        # first 12 bytes of the message corresopnd to the header
+        curr = 12
+        res = ''
+        while message[curr] != 0x0:
+            read = message[curr] + curr
+            while curr < read:
+                res += chr(message[curr + 1])
+                curr += 1
+            curr += 1
+            res += '.'
+
+        return curr, res[:-1]
 
 
 class DNSAnswer:
@@ -154,10 +177,8 @@ def main():
                 # ovwerrite received flags for our reply
                 header.qr, header.ancount, header.arcount, header.nscount = 1, 1, 0, 0
                 header.rcode = 0 if not header.opcode else 4
-                print(vars(header))
-                domain = "codecrafters.io"
-                q = DNSQuestion(domain)
-                a = DNSAnswer(domain, "8.8.8.8")
+                q = DNSQuestion.from_bytes(data)
+                a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
                 s.sendto(header.to_bytes() + q.to_bytes() + a.to_bytes(), addr)
             except Exception as e:
                 print(f"Error receiving data: {e}")
