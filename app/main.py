@@ -184,27 +184,23 @@ def main():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(("127.0.0.1", 2053))
         while True:
-            try:
-                data, addr = s.recvfrom(512)
-                print(f"Received data from {addr}: {data}")
-                header = DNSHeader.from_bytes(data)
-                header.qr, header.ancount, header.arcount, header.nscount = 1, 0, 0, 0
-                header.rcode = 0 if not header.opcode else 4
+            data, addr = s.recvfrom(512)
+            print(f"Received data from {addr}: {data}")
+            header = DNSHeader.from_bytes(data)
+            header.qr, header.ancount, header.arcount, header.nscount = 1, 0, 0, 0
+            header.rcode = 0 if not header.opcode else 4
 
-                questions = DNSQuestion.from_bytes(data)
-                response_body = b''
-                for q in questions:
-                    if q.qtype == 1:  # Only process if QTYPE is A
-                        response_body += q.to_bytes()
-                        a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
-                        response_body += a.to_bytes()
-                        header.ancount += 1
+            questions = DNSQuestion.from_bytes(data)
+            response_body = b''
+            for q in questions:
+                if q.qtype == 1:  # Only process if QTYPE is A
+                    response_body += q.to_bytes()
+                    a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
+                    response_body += a.to_bytes()
+                    header.ancount += 1
 
-                response = header.to_bytes() + response_body
-                s.sendto(response, addr)
-            except Exception as e:
-                print(f"Error receiving data: {e}")
-                break
+            response = header.to_bytes() + response_body
+            s.sendto(response, addr)
 
 
 if __name__ == "__main__":
