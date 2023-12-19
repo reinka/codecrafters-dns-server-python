@@ -111,17 +111,14 @@ class DNSQuestion:
         return self.qname + struct.pack("!HH", self.qtype, self.qclass)
 
     @staticmethod
-    def from_bytes(message: bytes) -> list['DNSQuestion']:
+    def from_bytes(message: bytes, qdcount: int) -> list['DNSQuestion']:
         questions = []
         offset = 12  # Start after the header
-        while offset < len(message):
+        for _ in range(qdcount):  # Iterate over the number of questions
             domain, offset = DNSQuestion.parse_domain(message, offset)
-            if offset + 4 <= len(message):  # Ensure enough bytes for QTYPE and QCLASS
-                qtype, qclass = struct.unpack('!HH', message[offset:offset + 4])
-                questions.append(DNSQuestion(domain, qtype, qclass))
-                offset += 4
-            else:
-                break
+            qtype, qclass = struct.unpack('!HH', message[offset:offset + 4])
+            questions.append(DNSQuestion(domain, qtype, qclass))
+            offset += 4
         return questions
     
     @staticmethod
@@ -190,7 +187,7 @@ def main():
             header.qr, header.ancount, header.arcount, header.nscount = 1, 0, 0, 0
             header.rcode = 0 if not header.opcode else 4
 
-            questions = DNSQuestion.from_bytes(data)
+            questions = DNSQuestion.from_bytes(data, header.qdcount)
             response_body = b''
             for q in questions:
                 if q.qtype == 1:  # Only process if QTYPE is A
