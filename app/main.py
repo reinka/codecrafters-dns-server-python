@@ -153,6 +153,7 @@ def main():
                 header = DNSHeader.from_bytes(data)
                 # ovwerrite received flags for our reply
                 header.qr, header.ancount, header.arcount, header.nscount = 1, 1, 0, 0
+                header.rcode = 0 if not header.opcode else 4
                 print(vars(header))
                 domain = "codecrafters.io"
                 q = DNSQuestion(domain)
