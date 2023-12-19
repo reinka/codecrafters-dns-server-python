@@ -111,26 +111,40 @@ class DNSQuestion:
         return self.qname + struct.pack("!HH", self.qtype, self.qclass)
 
     @staticmethod
-    def from_bytes(message : bytes) -> 'DNSQuestion':
-        name_end, domain = DNSQuestion.parse_domain(message)
-        start, end = name_end + 1, name_end + 5
-        qtype, qclass = struct.unpack('!HH', message[start:end])
-        return DNSQuestion(domain, qtype, qclass)
+    def from_bytes(message: bytes) -> list['DNSQuestion']:
+        questions = []
+        offset = 12  # Start after the header
+        while offset < len(message):
+            domain, offset = DNSQuestion.parse_domain(message, offset)
+            if offset + 4 <= len(message):  # Ensure enough bytes for QTYPE and QCLASS
+                qtype, qclass = struct.unpack('!HH', message[offset:offset + 4])
+                questions.append(DNSQuestion(domain, qtype, qclass))
+                offset += 4
+            else:
+                break
+        return questions
     
     @staticmethod
-    def parse_domain(message : bytes) -> tuple:
-        # first 12 bytes of the message corresopnd to the header
-        curr = 12
-        res = ''
-        while message[curr] != 0x0:
-            read = message[curr] + curr
-            while curr < read:
-                res += chr(message[curr + 1])
-                curr += 1
-            curr += 1
-            res += '.'
+    def parse_domain(message: bytes, offset: int) -> tuple:
+        labels = []
+        while True:
+            length = message[offset]
+            if length & 0xC0 == 0xC0:  # Check for compression
+                pointer = struct.unpack("!H", message[offset:offset+2])[0]
+                offset += 2
+                pointer &= 0x3FFF  # Remove the compression flag bits
+                part, _ = DNSQuestion.parse_domain(message, pointer)
+                labels.append(part)
+                return '.'.join(labels), offset
 
-        return curr, res[:-1]
+            offset += 1  # Skip the length byte
+            if length == 0:  # End of the domain name
+                break
+
+            labels.append(message[offset:offset+length].decode('utf-8'))
+            offset += length
+
+        return '.'.join(labels), offset
 
 
 class DNSAnswer:
@@ -174,12 +188,20 @@ def main():
                 data, addr = s.recvfrom(512)
                 print(f"Received data from {addr}: {data}")
                 header = DNSHeader.from_bytes(data)
-                # ovwerrite received flags for our reply
-                header.qr, header.ancount, header.arcount, header.nscount = 1, 1, 0, 0
+                header.qr, header.ancount, header.arcount, header.nscount = 1, 0, 0, 0
                 header.rcode = 0 if not header.opcode else 4
-                q = DNSQuestion.from_bytes(data)
-                a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
-                s.sendto(header.to_bytes() + q.to_bytes() + a.to_bytes(), addr)
+
+                questions = DNSQuestion.from_bytes(data)
+                response_body = b''
+                for q in questions:
+                    if q.qtype == 1:  # Only process if QTYPE is A
+                        response_body += q.to_bytes()
+                        a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
+                        response_body += a.to_bytes()
+                        header.ancount += 1
+
+                response = header.to_bytes() + response_body
+                s.sendto(response, addr)
             except Exception as e:
                 print(f"Error receiving data: {e}")
                 break
