@@ -21,11 +21,17 @@ class DNSHeader:
     ):
         self.id = hid
         self.qr = qr
-        self.opcode = (
-            self.aa
-        ) = self.tc = self.rd = self.ra = self.z = self.rcode = rcode
-        self.ancount = self.qdcount = qdcount
-        self.nscount = self.arcount = arcount
+        self.opcode = opcode
+        self.aa = aa
+        self.tc = tc 
+        self.rd = rd
+        self.ra = ra 
+        self.z = z 
+        self.rcode = rcode
+        self.ancount = ancount
+        self.qdcount = qdcount
+        self.nscount = nscount
+        self.arcount = arcount
 
     @staticmethod
     def from_bytes(message: bytes) -> "DNSHeader":
