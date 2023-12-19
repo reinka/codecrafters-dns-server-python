@@ -182,21 +182,46 @@ def main():
         s.bind(("127.0.0.1", 2053))
         while True:
             data, addr = s.recvfrom(512)
+            # h1 = DNSHeader.from_bytes(data)
+            # data = b'\xc0\x90\x01\x00\x00\x02\x00\x00\x00\x00\x00\x00\x03abc\x11longassdomainname\x03com\x00\x00\x01\x00\x01\x03def\xc0\x10\x00\x01\x00\x01'
             print(f"Received data from {addr}: {data}")
-            header = DNSHeader.from_bytes(data)
-            header.qr, header.ancount, header.arcount, header.nscount = 1, 0, 0, 0
-            header.rcode = 0 if not header.opcode else 4
+            query_header = DNSHeader.from_bytes(data)
+            # query_header.id = h1.id
+            query_header.qr, query_header.ancount, query_header.arcount, query_header.nscount = 1, 1, 0, 0
+            query_header.rcode = 0 if not query_header.opcode else 4
 
-            questions = DNSQuestion.from_bytes(data, header.qdcount)
-            response_body = b''
-            for q in questions:
-                if q.qtype == 1:  # Only process if QTYPE is A
-                    response_body += q.to_bytes()
+            # Parsing the question section
+            query_questions = DNSQuestion.from_bytes(data, query_header.qdcount)
+            response_header = DNSHeader(
+                hid=query_header.id,  # Match the query's ID
+                qr=1,  # This is a response
+                opcode=query_header.opcode,
+                aa=1,  # Assuming authoritative answer
+                tc=0,  # Not truncated
+                rd=query_header.rd,
+                ra=0,  # Recursion not available
+                z=0,
+                rcode=0 if not query_header.opcode else 4,
+                qdcount=query_header.qdcount,
+                ancount=len(query_questions),  # Assuming one answer per question
+                nscount=0,
+                arcount=0
+            )
+
+            # Constructing the question section for the response
+            response_questions = b''.join(q.to_bytes() for q in query_questions)
+
+            # Constructing the answer section
+            response_answers = b''
+            for q in query_questions:
+                if q.qtype == 1:  # Process if QTYPE is A
                     a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
-                    response_body += a.to_bytes()
-                    header.ancount += 1
+                    response_answers += a.to_bytes()
 
-            response = header.to_bytes() + response_body
+            # Assembling the full response
+            response = response_header.to_bytes() + response_questions + response_answers
+            print(f'response is {response}')
+            print(f'Sending response to {addr}')
             s.sendto(response, addr)
 
 
