@@ -132,15 +132,15 @@ class DNSQuestion:
         return self.qname + struct.pack("!HH", self.qtype, self.qclass)
 
     @staticmethod
-    def from_bytes(message: bytes, qdcount: int) -> list['DNSQuestion']:
+    def from_bytes(message: bytes, qdcount: int) -> tuple[list['DNSQuestion'], int]:
         questions = []
         offset = 12  # Start after the header
-        for _ in range(qdcount):  # Iterate over the number of questions
+        for _ in range(qdcount):
             domain, offset = DNSQuestion.parse_domain(message, offset)
             qtype, qclass = struct.unpack('!HH', message[offset:offset + 4])
             questions.append(DNSQuestion(domain, qtype, qclass))
             offset += 4
-        return questions
+        return questions, offset
     
     @staticmethod
     def parse_domain(message: bytes, offset: int) -> tuple:
@@ -228,7 +228,7 @@ def main():
             query_header = DNSHeader.from_bytes(data)
 
             # Parsing the question section
-            query_questions = DNSQuestion.from_bytes(data, query_header.qdcount)
+            query_questions, questions_offset = DNSQuestion.from_bytes(data, query_header.qdcount)
             response_header = DNSHeader(
                 hid=query_header.id,  # Match the query's ID
                 qr=1,  # This is a response
@@ -248,39 +248,41 @@ def main():
             if args.resolver:
                 host, port = args.resolver.split(":")
                 port = int(port)
-                answers = []
-                # forward questions one by one
+                aggregated_answers = []
+
                 for question in query_questions:
+                    # Forward each question separately
                     fw_header = DNSHeader(
-                        hid=query_header.id,  # Match the query's ID
-                        qr=0,
+                        hid=query_header.id,  # Keep the original ID
+                        qr=0,  # Query
                         opcode=query_header.opcode,
                         aa=0,
-                        tc=0,  # Not truncated
+                        tc=0,
                         rd=query_header.rd,
                         ra=0,
                         z=0,
-                        rcode=0 if not query_header.opcode else 4,
-                        qdcount=1,
+                        rcode=0,
+                        qdcount=1,  # Only one question
                         ancount=0,
                         nscount=0,
                         arcount=0
                     )
-                    print(f"[server] <> forwarding {question}")
                     fw_query = fw_header.to_bytes() + question.to_bytes()
                     fw_response = forward_dns_query(fw_query, host, port)
-                    print(f"[server] <> got forwarded raw{fw_response}")
-                    response_header = DNSHeader.from_bytes(fw_response)
-                    offset = 12  # Start after the header for parsing questions
-                    response_questions, offset = DNSQuestion.from_bytes(fw_response, response_header.qdcount)
-                    response_answers, _ = DNSAnswer.from_bytes(fw_response, offset, response_header.ancount)
 
-                    # Constructing the response
-                    response = response_header.to_bytes()
-                    for question in response_questions:
-                        response += question.to_bytes()
-                    for answer in response_answers:
-                        response += answer.to_bytes()
+                    # Parse the response and aggregate answers
+                    fw_header_res = DNSHeader.from_bytes(fw_response)
+                    offset = 12  # Start after the header
+                    _, offset = DNSQuestion.from_bytes(fw_response, fw_header_res.qdcount)  # Skip questions
+                    fw_answers, _ = DNSAnswer.from_bytes(fw_response, offset, fw_header_res.ancount)
+                    aggregated_answers.extend(fw_answers)
+
+                # Construct the final response
+                response_header.qdcount = query_header.qdcount
+                response_header.ancount = len(aggregated_answers)
+                response = response_header.to_bytes() + data[12:questions_offset]
+                for answer in aggregated_answers:
+                    response += answer.to_bytes()
             else:
 
                 # Constructing the question section for the response
