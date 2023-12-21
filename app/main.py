@@ -97,6 +97,27 @@ def encode_str_to_bytes(data: str) -> bytes:
     return result
 
 
+def parse_domain(message: bytes, offset: int) -> tuple:
+        labels = []
+        while True:
+            length = message[offset]
+            if length & 0xC0 == 0xC0:  # Check for compression
+                pointer = struct.unpack("!H", message[offset:offset+2])[0]
+                offset += 2
+                pointer &= 0x3FFF  # Remove the compression flag bits
+                part, _ = DNSQuestion.parse_domain(message, pointer)
+                labels.append(part)
+                return '.'.join(labels), offset
+
+            offset += 1  # Skip the length byte
+            if length == 0:  # End of the domain name
+                break
+
+            labels.append(message[offset:offset+length].decode('utf-8'))
+            offset += length
+
+        return '.'.join(labels), offset
+
 class DNSQuestion:
     def __init__(self, domain: str, qtype: int = 1, qclass: int = 1) -> None:
         self.qname = self.encode(domain)
@@ -123,25 +144,7 @@ class DNSQuestion:
     
     @staticmethod
     def parse_domain(message: bytes, offset: int) -> tuple:
-        labels = []
-        while True:
-            length = message[offset]
-            if length & 0xC0 == 0xC0:  # Check for compression
-                pointer = struct.unpack("!H", message[offset:offset+2])[0]
-                offset += 2
-                pointer &= 0x3FFF  # Remove the compression flag bits
-                part, _ = DNSQuestion.parse_domain(message, pointer)
-                labels.append(part)
-                return '.'.join(labels), offset
-
-            offset += 1  # Skip the length byte
-            if length == 0:  # End of the domain name
-                break
-
-            labels.append(message[offset:offset+length].decode('utf-8'))
-            offset += length
-
-        return '.'.join(labels), offset
+        return parse_domain(message, offset)
 
 
 class DNSAnswer:
@@ -173,9 +176,46 @@ class DNSAnswer:
 
     def to_bytes(self) -> bytes:
         return self.name + self.type + self.aclass + self.ttl + self.length + self.rdata
+    
+    @staticmethod
+    def parse_domain(message: bytes, offset: int) -> tuple:
+        return parse_domain(message, offset)
+    
+    @staticmethod
+    def from_bytes(message: bytes, offset: int, ancount: int) -> tuple[list['DNSAnswer'], int]:
+        answers = []
+        for _ in range(ancount):
+            name, offset = DNSAnswer.parse_domain(message, offset)
+            atype, aclass, ttl, rdlength = struct.unpack('!HHIH', message[offset:offset + 10])
+            offset += 10  # Advance offset past these fields
+            rdata = message[offset:offset + rdlength]
+            
+            # If type is A (1), convert rdata to an IP address
+            if atype == 1:
+                ip = '.'.join(map(str, rdata))
+            else:
+                ip = ''  # Other record types not handled in this example
 
+            answers.append(DNSAnswer(name, ip, atype, aclass, ttl, rdlength))
+            offset += rdlength
+
+        return answers, offset
+
+def forward_dns_query(query: bytes, dns_server: str, dns_port: int = 53) -> bytes:
+    # Create a socket to communicate with the DNS server
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns_socket:
+        dns_socket.settimeout(2)  # Set a timeout for the DNS query
+        # Send the DNS query to the specified DNS server
+        dns_socket.sendto(query, (dns_server, dns_port))
+        # Receive the response from the DNS server
+        response, _ = dns_socket.recvfrom(4096)
+    return response
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resolver", required=False, default=None)
+    args = parser.parse_args()
     print("Starting UDP server...")
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -186,9 +226,6 @@ def main():
             # data = b'\xc0\x90\x01\x00\x00\x02\x00\x00\x00\x00\x00\x00\x03abc\x11longassdomainname\x03com\x00\x00\x01\x00\x01\x03def\xc0\x10\x00\x01\x00\x01'
             print(f"Received data from {addr}: {data}")
             query_header = DNSHeader.from_bytes(data)
-            # query_header.id = h1.id
-            query_header.qr, query_header.ancount, query_header.arcount, query_header.nscount = 1, 1, 0, 0
-            query_header.rcode = 0 if not query_header.opcode else 4
 
             # Parsing the question section
             query_questions = DNSQuestion.from_bytes(data, query_header.qdcount)
@@ -208,15 +245,53 @@ def main():
                 arcount=0
             )
 
-            # Constructing the question section for the response
-            response_questions = b''.join(q.to_bytes() for q in query_questions)
+            if args.resolver:
+                host, port = args.resolver.split(":")
+                port = int(port)
+                answers = []
+                # forward questions one by one
+                for question in query_questions:
+                    fw_header = DNSHeader(
+                        hid=query_header.id,  # Match the query's ID
+                        qr=0,
+                        opcode=query_header.opcode,
+                        aa=0,
+                        tc=0,  # Not truncated
+                        rd=query_header.rd,
+                        ra=0,
+                        z=0,
+                        rcode=0 if not query_header.opcode else 4,
+                        qdcount=1,
+                        ancount=0,
+                        nscount=0,
+                        arcount=0
+                    )
+                    print(f"[server] <> forwarding {question}")
+                    fw_query = fw_header.to_bytes() + question.to_bytes()
+                    fw_response = forward_dns_query(fw_query, host, port)
+                    print(f"[server] <> got forwarded raw{fw_response}")
+                    response_header = DNSHeader.from_bytes(fw_response)
+                    offset = 12  # Start after the header for parsing questions
+                    response_questions, offset = DNSQuestion.from_bytes(fw_response, response_header.qdcount)
+                    response_answers, _ = DNSAnswer.from_bytes(fw_response, offset, response_header.ancount)
 
-            # Constructing the answer section
-            response_answers = b''
-            for q in query_questions:
-                if q.qtype == 1:  # Process if QTYPE is A
-                    a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
-                    response_answers += a.to_bytes()
+                    # Constructing the response
+                    response = response_header.to_bytes()
+                    for question in response_questions:
+                        response += question.to_bytes()
+                    for answer in response_answers:
+                        response += answer.to_bytes()
+            else:
+
+                # Constructing the question section for the response
+                response_questions = b''.join(q.to_bytes() for q in query_questions)
+
+                # Constructing the answer section
+                response_answers = b''
+                for q in query_questions:
+                    if q.qtype == 1:  # Process if QTYPE is A
+                        a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
+                        response_answers += a.to_bytes()
 
             # Assembling the full response
             response = response_header.to_bytes() + response_questions + response_answers
