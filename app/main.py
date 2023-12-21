@@ -295,8 +295,8 @@ def main():
                         a = DNSAnswer(q.domain, "8.8.8.8", q.qtype, q.qclass)
                         response_answers += a.to_bytes()
 
-            # Assembling the full response
-            response = response_header.to_bytes() + response_questions + response_answers
+                # Assembling the full response
+                response = response_header.to_bytes() + response_questions + response_answers
             print(f'response is {response}')
             print(f'Sending response to {addr}')
             s.sendto(response, addr)
